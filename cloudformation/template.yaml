@@ -1,0 +1,175 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Deploy your object tracking application
+Parameters:
+  S3SourceBucket:
+    Description: S3 Source Bucket
+    Type: String
+    AllowedPattern: ^[a-zA-Z0-9-]*$
+  LookoutProjectName:
+    Description: Name of your Lookout Project
+    Type: String
+    AllowedPattern: ^[a-zA-Z0-9-]*$
+  FlowID:
+    Description: Contact Flow ID
+    Type: String
+    AllowedPattern: ^[a-zA-Z0-9-]*$
+  InstanceID:
+    Description: Amazon Connect Instance ID
+    Type: String
+    AllowedPattern: ^[a-zA-Z0-9-]*$
+  SourceNumber:
+    Description: Claimed number in Amazon Connect
+    Type: String
+    AllowedPattern: ^[0-9+]*$
+  DestNumber:
+    Description: Claimed number in Amazon Connect
+    Type: String
+    AllowedPattern: ^[0-9+]*$
+Resources:
+  SagemakerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - sagemaker.amazonaws.com
+            Action: 
+              - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSageMakerFullAccess'
+  CFNSagemakerLifeCyclePolicy:
+    Type: AWS::SageMaker::NotebookInstanceLifecycleConfig
+    Properties:
+        NotebookInstanceLifecycleConfigName: l4v-lfc
+        OnStart: 
+        - Content:
+            Fn::Base64:
+                !Sub |
+                #!/bin/bash
+                sudo -u ec2-user -i <<'EOF'
+                cd /home/ec2-user/SageMaker
+                git clone https://github.com/aws-samples/amazon-lookout-for-vision-python-sdk.git
+                EOF
+  SagemakerNotebook:
+    Type: AWS::SageMaker::NotebookInstance
+    Properties:
+      DirectInternetAccess: Enabled
+      InstanceType: ml.t3.medium
+      LifecycleConfigName: l4v-lfc
+      NotebookInstanceName: amazon-lookout-vision-create-project
+      RoleArn: !Join [ '', [ 'arn:aws:iam::', !Ref AWS::AccountId, ':role/', !Ref SagemakerRole ] ]
+      RootAccess: Enabled
+      VolumeSizeInGB: 20
+  AmplifyApp:
+    Type: AWS::Amplify::App
+    Properties: 
+      Name: ObjectTracking
+  LambdaEventPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      ManagedPolicyName: LambdaEventPolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - s3:PutObject
+              - connect:StartOutboundVoiceContact
+            Resource:
+              - !Join [':', [ 'arn:aws:logs', !Ref AWS::Region, !Ref AWS::AccountId, '*' ] ]
+              - !Join ['', [ 'arn:aws:s3:::', !Ref S3SourceBucket, '/*' ] ]
+              - !Join [':', [ 'arn:aws:connect', !Ref AWS::Region, !Ref AWS::AccountId, 'instance/*/contact/*' ] ]
+          - Effect: Allow
+            Action:
+              - lookoutvision:DetectAnomalies
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: !Join ['', [ 'arn:aws:logs:', !Ref AWS::Region, ':', !Ref AWS::AccountId, ':log-group:/aws/lambda/amazon-lookout-vision-api:*' ] ]
+  LambdaEventRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action: 
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !Ref LambdaEventPolicy
+  EventPrediction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: amazon-lookout-vision-api
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref S3SourceBucket
+          PROJECT_NAME: !Ref LookoutProjectName
+          ALLOW_ORIGIN: "empty"
+          INSTANCE_ID: !Ref InstanceID
+          FLOW_ID: !Ref FlowID
+          SOURCE_NUMBER: !Ref SourceNumber
+          DEST_NUMBER: !Ref DestNumber
+      Code:
+        S3Bucket: !Ref S3SourceBucket
+        S3Key: amazon-lookout-vision-api.zip
+      Timeout: 30
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      MemorySize: 512
+      Role: !Join [ '', [ 'arn:aws:iam::', !Ref AWS::AccountId, ':role/', !Ref LambdaEventRole ] ]
+  LambdaAPIGateway:
+    Type: AWS::Lambda::Permission
+    Properties: 
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt EventPrediction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Join ['', ['arn:aws:execute-api:', !Ref AWS::Region, ':', !Ref AWS::AccountId, ':', !Ref ApiGatewayAPI, '/*/*/amazon-lookout-vision-api' ] ]
+  ApiGatewayAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      BinaryMediaTypes: 
+        - "*/*"
+      Name: LookoutVisionAPI
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+  ApiGatewayResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      RestApiId: !Ref ApiGatewayAPI
+      ParentId: !GetAtt 
+        - ApiGatewayAPI
+        - RootResourceId
+      PathPart: amazon-lookout-vision-api
+  ApiGatewayMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: "NONE"
+      RestApiId: !Ref ApiGatewayAPI
+      ResourceId: !Ref ApiGatewayResource
+      HttpMethod: ANY
+      Integration:
+        IntegrationHttpMethod: ANY
+        Type: AWS_PROXY
+        Uri: !Join ['', [ 'arn:aws:apigateway:', !Ref AWS::Region, ':lambda:path/2015-03-31/functions/', !GetAtt EventPrediction.Arn, '/invocations' ] ]
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels: { "application/json": "Empty" }
+  ApiGatewayDeploy: 
+    Type: AWS::ApiGateway::Deployment
+    Properties: 
+      RestApiId: !Ref ApiGatewayAPI
+      StageName: dev
+    DependsOn:
+      - ApiGatewayMethod
