@@ -52,7 +52,7 @@ Resources:
                 #!/bin/bash
                 sudo -u ec2-user -i <<'EOF'
                 cd /home/ec2-user/SageMaker
-                git clone https://github.com/aws-samples/amazon-lookout-for-vision-python-sdk.git
+                git clone https://github.com/awslabs/amazon-lookout-for-vision-python-sdk.git
                 EOF
   SagemakerNotebook:
     Type: AWS::SageMaker::NotebookInstance
