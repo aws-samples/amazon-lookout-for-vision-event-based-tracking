@@ -6,7 +6,7 @@ Many enterprise customers want to identify missing components in products, damag
 
 In this post, we look at how we can automate detecting anomalies in silicon wafers and notifying operators in real time.
 
-You will find the blog here:
+You will find the blog here: https://aws.amazon.com/blogs/machine-learning/build-an-event-based-tracking-solution-using-amazon-lookout-for-vision/
 
 ## Security
 
