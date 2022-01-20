@@ -13,7 +13,7 @@ CloudFormationStack="YOUR_CLOUD_FORMATION_STACK_NAME"
 ## Create S3 bucket and set parameters for CloudFormation stack
 # Build your paramater string for the CFT
 JSON_PARAM="ParameterKey=S3SourceBucket,ParameterValue=%s ParameterKey=LookoutProjectName,ParameterValue=%s ParameterKey=FlowID,ParameterValue=%s ParameterKey=InstanceID,ParameterValue=%s ParameterKey=SourceNumber,ParameterValue=%s ParameterKey=DestNumber,ParameterValue=%s"
-JSON_PARAM=$(printf "$JSON_PARAM" "$S3SourceBucket" "$LookoutProjectName" "$FlowID" "$InstanceID" "$SourceNumber $DestNumber")
+JSON_PARAM=$(printf "$JSON_PARAM" "$S3SourceBucket" "$LookoutProjectName" "$FlowID" "$InstanceID" "$SourceNumber" "$DestNumber")
 
 # Create your S3 bucket
 if [ "$ApplicationRegion" = "us-east-1" ]; then
